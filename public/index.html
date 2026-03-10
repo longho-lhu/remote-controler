@@ -22,6 +22,10 @@
     <span class="dot" id="gamepadDot"></span>
     <span id="gamepadLabel">TX: –</span>
   </div>
+  <button class="btn-serial" id="btnSerial" title="Kết nối Serial Port">
+    <span class="serial-dot" id="serialDot"></span>
+    <span id="serialLabel">Serial</span>
+  </button>
   <button class="btn-settings" id="btnSettings" title="Cài đặt">⚙</button>
 </header>
 
@@ -64,13 +68,7 @@
 </div>
 
 <!-- ── Main layout ─────────────────────────────────────────────────────────── -->
-<main class="controller">
-
-  <!-- Left grip -->
-  <div class="grip grip-left"></div>
-
-  <!-- Controller body -->
-  <div class="body">
+<main class="main-content">
 
     <!-- ── Video Panel ──────────────────────────────────────────────────── -->
     <div class="video-panel">
@@ -91,108 +89,33 @@
           <div class="hud-left">
             <span class="hud-item"><span class="hud-lbl">DIR</span><span class="hud-val" id="hudDir">STOP</span></span>
             <span class="hud-item"><span class="hud-lbl">SPD</span><span class="hud-val" id="hudSpd">0%</span></span>
+            <span class="hud-item"><span class="hud-lbl">MQTT</span><span class="hud-val" id="hudMqtt">–</span></span>
           </div>
           <div class="hud-right">
-            <span class="hud-item"><span class="hud-lbl">MQTT</span><span class="hud-val" id="hudMqtt">–</span></span>
+            <div class="hud-arrow" id="arrowChevron">■</div>
           </div>
         </div>
       </div>
       <!-- Telemetry channel strip -->
       <div class="telem-strip">
-        <div class="telem-item"><span class="tl">ROLL(CH1)</span><span class="tv" id="ch1Val">0</span></div>
-        <div class="telem-item"><span class="tl">PITCH(CH2)</span><span class="tv" id="ch2Val">0</span></div>
-        <div class="telem-item"><span class="tl">THR(CH3)</span><span class="tv" id="ch3Val">0</span></div>
-        <div class="telem-item"><span class="tl">YAW(CH4)</span><span class="tv" id="ch4Val">0</span></div>
+        <div class="telem-item"><span class="tl">ROLL CH1</span><span class="tv" id="ch1Val">–</span></div>
+        <div class="telem-item"><span class="tl">PITCH CH2</span><span class="tv" id="ch2Val">–</span></div>
+        <div class="telem-item"><span class="tl">THR CH3</span><span class="tv" id="ch3Val">–</span></div>
+        <div class="telem-item"><span class="tl">YAW CH4</span><span class="tv" id="ch4Val">–</span></div>
         <div class="telem-item"><span class="tl">CH5</span><span class="tv" id="ch5Val">–</span></div>
         <div class="telem-item"><span class="tl">CH6</span><span class="tv" id="ch6Val">–</span></div>
         <div class="telem-item tx-status"><span class="tl">TX</span><span class="tv tx-val" id="txStatus">NOT CONNECTED</span></div>
-      </div>
-    </div>
-
-    <!-- Controls row -->
-    <div class="controls-row">
-
-      <!-- D-Pad (left stick) -->
-      <div class="dpad-section">
-        <div class="section-label">MOVE</div>
-        <div class="dpad">
-          <button class="dpad-btn dpad-up"    id="btnUp"    data-dir="forward"  title="W / ↑">▲</button>
-          <button class="dpad-btn dpad-left"  id="btnLeft"  data-dir="left"     title="A / ←">◀</button>
-          <button class="dpad-btn dpad-center"id="btnStop"  data-dir="stop"     title="Space">■</button>
-          <button class="dpad-btn dpad-right" id="btnRight" data-dir="right"    title="D / →">▶</button>
-          <button class="dpad-btn dpad-down"  id="btnDown"  data-dir="backward" title="S / ↓">▼</button>
-        </div>
-        <div class="key-hints">W A S D / Arrows</div>
-      </div>
-
-      <!-- Center panel -->
-      <div class="center-panel">
-        <!-- Arrow indicator -->
-        <div class="arrow-section">
-          <div class="arrow-ring">
-            <div class="arrow-chevron" id="arrowChevron">■</div>
-          </div>
-          <div class="arrow-label" id="dispDirection">STOP</div>
-          <div class="arrow-speed" id="dispSpeed">0%</div>
-        </div>
-        <!-- Speed dial -->
-        <div class="speed-section">
-          <div class="section-label">SPEED</div>
-          <div class="speed-dial-wrap">
-            <svg class="speed-arc" viewBox="0 0 120 70" xmlns="http://www.w3.org/2000/svg">
-              <path class="arc-bg"   d="M10,65 A55,55 0 0,1 110,65" fill="none" stroke="#1e2a3a" stroke-width="10" stroke-linecap="round"/>
-              <path class="arc-fill" id="arcFill" d="M10,65 A55,55 0 0,1 110,65" fill="none" stroke="#00e5ff" stroke-width="10" stroke-linecap="round"
-                    style="stroke-dasharray: 173; stroke-dashoffset: 87;"/>
-            </svg>
-            <div class="speed-value" id="speedValue">50</div>
-            <div class="speed-unit">%</div>
-          </div>
-          <input type="range" class="speed-slider" id="speedSlider" min="0" max="100" value="50" />
-          <div class="key-hints">+/− or Slider</div>
-        </div>
-
-        <!-- Action buttons row -->
-        <div class="action-btns">
-          <button class="act-btn btn-horn"  id="btnHorn"  title="Horn (H)">📢</button>
-          <button class="act-btn btn-light" id="btnLight" title="Light (L)">💡</button>
-          <button class="act-btn btn-turbo" id="btnTurbo" title="Turbo (T)">⚡</button>
-        </div>
-      </div>
-
-      <!-- Right analog (decorative + diagonal) -->
-      <div class="dpad-section">
-        <div class="section-label">DIAGONAL</div>
-        <div class="dpad">
-          <button class="dpad-btn dpad-up"    id="btnFwdLeft"  data-dir="forward-left"  title="Q">↖</button>
-          <button class="dpad-btn dpad-left"  id="btnBwdLeft"  data-dir="backward-left" title="Z">↙</button>
-          <button class="dpad-btn dpad-center"id="btnStop2"    data-dir="stop"          title="Space">■</button>
-          <button class="dpad-btn dpad-right" id="btnFwdRight" data-dir="forward-right" title="E">↗</button>
-          <button class="dpad-btn dpad-down"  id="btnBwdRight" data-dir="backward-right"title="C">↘</button>
-        </div>
-        <div class="key-hints">Q E Z C</div>
-      </div>
-
-    </div><!-- /controls-row -->
-
-    <!-- Bottom triggers -->
-    <div class="triggers-row">
-      <button class="trigger trigger-l" id="trigL" title="Brake (Shift)">L2 BRAKE</button>
-      <div class="triggers-center">
-        <div class="status-led-row">
-          <span class="led" id="ledForward" data-label="FWD"></span>
+        <!-- Direction LEDs -->
+        <div class="telem-leds">
+          <span class="led" id="ledForward"  data-label="FWD"></span>
           <span class="led" id="ledBackward" data-label="BWD"></span>
-          <span class="led" id="ledLeft" data-label="L"></span>
-          <span class="led" id="ledRight" data-label="R"></span>
-          <span class="led" id="ledStop" data-label="STOP"></span>
+          <span class="led" id="ledLeft"     data-label="L"></span>
+          <span class="led" id="ledRight"    data-label="R"></span>
+          <span class="led" id="ledStop"     data-label="STP"></span>
         </div>
       </div>
-      <button class="trigger trigger-r" id="trigR" title="Turbo hold (Ctrl)">R2 TURBO</button>
     </div>
 
-  </div><!-- /body -->
-
-  <!-- Right grip -->
-  <div class="grip grip-right"></div>
 
 </main>
 
@@ -205,8 +128,7 @@
   <ul class="log-list" id="logList"></ul>
 </section>
 
-<!-- ── Keyboard overlay ────────────────────────────────────────────────────── -->
-<div class="key-overlay" id="keyOverlay"></div>
+
 
 <script src="/socket.io/socket.io.js"></script>
 <script src="app.js"></script>

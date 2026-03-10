@@ -3,6 +3,7 @@
  *  • Gamepad API: đọc TX RadioMaster (EdgeTX) qua USB / Bluetooth             *
  *  • Video: MJPEG img / HLS video / WebRTC                                     *
  *  • MQTT qua Socket.io                                                        *
+ *  ⚠ Điều khiển chỉ qua TX (Gamepad API) – bàn phím đã bị tắt               *
  * ──────────────────────────────────────────────────────────────────────────── */
 
 const socket = io();
@@ -11,12 +12,13 @@ const socket = io();
 const state = {
   direction: 'stop',
   speed: 50,
-  turboActive: false,
-  lightActive: false,
-  keysDown: new Set(),
-  // Gamepad
+  // Gamepad (HID)
   gamepadIndex: null,
   gamepadLoopId: null,
+  // Serial
+  serialPort: null,
+  serialReader: null,
+  serialConnected: false,
   videoUrl: '',
   videoType: 'mjpeg',
 };
@@ -26,15 +28,10 @@ const mqttDot    = document.getElementById('mqttDot');
 const mqttLabel  = document.getElementById('mqttLabel');
 const gamepadDot = document.getElementById('gamepadDot');
 const gamepadLbl = document.getElementById('gamepadLabel');
-const dispDir    = document.getElementById('dispDirection');
-const dispSpeed  = document.getElementById('dispSpeed');
-const dispBroker = null; // broker shown in HUD now
-const speedSlider= document.getElementById('speedSlider');
-const speedValue = document.getElementById('speedValue');
-const arcFill    = document.getElementById('arcFill');
+const serialDot  = document.getElementById('serialDot');
+const serialLbl  = document.getElementById('serialLabel');
 const arrowChev  = document.getElementById('arrowChevron');
 const logList    = document.getElementById('logList');
-const keyOverlay = document.getElementById('keyOverlay');
 const settingsOverlay = document.getElementById('settingsOverlay');
 
 // Video refs
@@ -51,33 +48,16 @@ const chRefs = [1,2,3,4,5,6].map(i => document.getElementById(`ch${i}Val`));
 
 // Direction → display config
 const DIR_CONFIG = {
-  stop:           { label: 'STOP',     arrow: '■',  deg: 0,   leds: ['ledStop']                   },
-  forward:        { label: 'FORWARD',  arrow: '▲',  deg: 0,   leds: ['ledForward']                },
-  backward:       { label: 'BACKWARD', arrow: '▼',  deg: 180, leds: ['ledBackward']               },
-  left:           { label: 'LEFT',     arrow: '◀',  deg: 270, leds: ['ledLeft']                   },
-  right:          { label: 'RIGHT',    arrow: '▶',  deg: 90,  leds: ['ledRight']                  },
-  'forward-left': { label: 'FWD-L',    arrow: '↖',  deg: 315, leds: ['ledForward','ledLeft']      },
-  'forward-right':{ label: 'FWD-R',    arrow: '↗',  deg: 45,  leds: ['ledForward','ledRight']     },
-  'backward-left':{ label: 'BWD-L',    arrow: '↙',  deg: 225, leds: ['ledBackward','ledLeft']     },
-  'backward-right':{ label: 'BWD-R',   arrow: '↘',  deg: 135, leds: ['ledBackward','ledRight']    },
+  stop:            { label: 'STOP',     arrow: '■',  leds: ['ledStop']                   },
+  forward:         { label: 'FORWARD',  arrow: '▲',  leds: ['ledForward']                },
+  backward:        { label: 'BACKWARD', arrow: '▼',  leds: ['ledBackward']               },
+  left:            { label: 'LEFT',     arrow: '◀',  leds: ['ledLeft']                   },
+  right:           { label: 'RIGHT',    arrow: '▶',  leds: ['ledRight']                  },
+  'forward-left':  { label: 'FWD-L',    arrow: '↖',  leds: ['ledForward','ledLeft']      },
+  'forward-right': { label: 'FWD-R',    arrow: '↗',  leds: ['ledForward','ledRight']     },
+  'backward-left': { label: 'BWD-L',    arrow: '↙',  leds: ['ledBackward','ledLeft']     },
+  'backward-right':{ label: 'BWD-R',    arrow: '↘',  leds: ['ledBackward','ledRight']    },
 };
-
-// Key → direction mapping
-const KEY_MAP = {
-  ArrowUp:    'forward',   KeyW: 'forward',
-  ArrowDown:  'backward',  KeyS: 'backward',
-  ArrowLeft:  'left',      KeyA: 'left',
-  ArrowRight: 'right',     KeyD: 'right',
-  // diagonal
-  KeyQ: 'forward-left',  KeyE: 'forward-right',
-  KeyZ: 'backward-left', KeyC: 'backward-right',
-  // stop
-  Space: 'stop',
-};
-
-// Speed ± keys
-const SPEED_UP_KEY   = 'Equal';   // +
-const SPEED_DOWN_KEY = 'Minus';   // -
 
 // ── Utility: log ──────────────────────────────────────────────────────────────
 function addLog(type, text, extra = '') {
@@ -90,39 +70,20 @@ function addLog(type, text, extra = '') {
   while (logList.children.length > 60) logList.removeChild(logList.lastChild);
 }
 
-// ── Utility: update arc fill (0-100 → stroke-dashoffset) ─────────────────────
-// Arc path length ≈ 173 (π × 55), offset = 173 → empty, 0 → full
-function updateArc(pct) {
-  const total = 173;
-  const offset = total - (pct / 100) * total;
-  arcFill.style.strokeDashoffset = offset;
-  // color: green 0-40, yellow 40-70, red 70-100
-  const hue = pct < 40 ? 160 : pct < 70 ? 45 : 0;
-  arcFill.style.stroke = `hsl(${hue},100%,55%)`;
-}
-
-// ── Utility: update all direction UI ─────────────────────────────────────────
+// ── Utility: update direction UI ─────────────────────────────────────────────
 function updateDirectionUI(dir) {
   const cfg = DIR_CONFIG[dir] || DIR_CONFIG.stop;
-  dispDir.textContent   = cfg.label;
   if (hudDir) hudDir.textContent = cfg.label;
   arrowChev.textContent = cfg.arrow;
-  arrowChev.style.transform = '';
   arrowChev.classList.toggle('active', dir !== 'stop');
   document.querySelectorAll('.led').forEach(l => l.classList.remove('active'));
   cfg.leds.forEach(id => document.getElementById(id)?.classList.add('active'));
-  document.querySelectorAll('.dpad-btn').forEach(btn => {
-    btn.classList.toggle('pressed', btn.dataset.dir === dir);
-  });
 }
 
 // ── Utility: update speed UI ──────────────────────────────────────────────────
 function updateSpeedUI(spd) {
-  speedSlider.value     = spd;
-  speedValue.textContent = spd;
-  dispSpeed.textContent  = spd + '%';
+  state.speed = spd;
   if (hudSpd) hudSpd.textContent = spd + '%';
-  updateArc(spd);
 }
 
 // ── Emit control to server ────────────────────────────────────────────────────
@@ -138,185 +99,7 @@ function emitControl(direction, speed) {
   updateSpeedUI(speed);
 }
 
-// ── Resolve active direction from currently pressed keys ─────────────────────
-function resolveDirection() {
-  // Priority: diagonal, then cardinal, then stop
-  const dirs = [...state.keysDown].map(k => KEY_MAP[k]).filter(Boolean);
-  if (!dirs.length) return 'stop';
-
-  // Combine forward+left etc.
-  const hasFwd  = dirs.includes('forward');
-  const hasBwd  = dirs.includes('backward');
-  const hasLeft = dirs.includes('left');
-  const hasRight= dirs.includes('right');
-
-  if (hasFwd && hasLeft)  return 'forward-left';
-  if (hasFwd && hasRight) return 'forward-right';
-  if (hasBwd && hasLeft)  return 'backward-left';
-  if (hasBwd && hasRight) return 'backward-right';
-
-  // Direct diagonals from Q E Z C
-  const diagDirs = dirs.filter(d => d.includes('-'));
-  if (diagDirs.length) return diagDirs[diagDirs.length - 1];
-
-  return dirs[dirs.length - 1];
-}
-
-// ── Keyboard handlers ─────────────────────────────────────────────────────────
-document.addEventListener('keydown', (e) => {
-  // Ignore when typing in input
-  if (e.target.tagName === 'INPUT') return;
-
-  const code = e.code;
-
-  // Speed up / down
-  if (code === SPEED_UP_KEY) {
-    e.preventDefault();
-    state.speed = Math.min(100, state.speed + 5);
-    emitControl(state.direction, state.speed);
-    showKeyOverlay('Speed +5%');
-    return;
-  }
-  if (code === SPEED_DOWN_KEY) {
-    e.preventDefault();
-    state.speed = Math.max(0, state.speed - 5);
-    emitControl(state.direction, state.speed);
-    showKeyOverlay('Speed -5%');
-    return;
-  }
-
-  // Turbo hold
-  if (code === 'ControlLeft' || code === 'ControlRight') {
-    document.getElementById('trigR').classList.add('pressed');
-    state.turboActive = true;
-    state.speed = 100;
-    updateSpeedUI(100);
-  }
-
-  // Brake / stop
-  if (code === 'ShiftLeft' || code === 'ShiftRight') {
-    e.preventDefault();
-    document.getElementById('trigL').classList.add('pressed');
-    state.keysDown.clear();
-    emitControl('stop', state.speed);
-    showKeyOverlay('BRAKE');
-    return;
-  }
-
-  // Horn
-  if (code === 'KeyH') { toggleHorn(); return; }
-  // Light
-  if (code === 'KeyL') { toggleLight(); return; }
-  // Turbo toggle
-  if (code === 'KeyT') { toggleTurbo(); return; }
-
-  if (!(code in KEY_MAP)) return;
-  e.preventDefault();
-
-  state.keysDown.add(code);
-
-  const dir = resolveDirection();
-  const spd = state.turboActive ? 100 : state.speed;
-  emitControl(dir, spd);
-  showKeyOverlay(code.replace('Key','').replace('Arrow',''));
-});
-
-document.addEventListener('keyup', (e) => {
-  if (e.target.tagName === 'INPUT') return;
-  const code = e.code;
-
-  if (code === 'ControlLeft' || code === 'ControlRight') {
-    document.getElementById('trigR').classList.remove('pressed');
-    state.turboActive = false;
-  }
-  if (code === 'ShiftLeft' || code === 'ShiftRight') {
-    document.getElementById('trigL').classList.remove('pressed');
-  }
-
-  state.keysDown.delete(code);
-  const dir = resolveDirection();
-  const spd = state.turboActive ? 100 : state.speed;
-  emitControl(dir, spd);
-});
-
-// Key overlay flash
-let keyOverlayTimer;
-function showKeyOverlay(text) {
-  keyOverlay.textContent = `[ ${text} ]`;
-  keyOverlay.classList.add('show');
-  clearTimeout(keyOverlayTimer);
-  keyOverlayTimer = setTimeout(() => keyOverlay.classList.remove('show'), 900);
-}
-
-// ── DPad button touch/click ───────────────────────────────────────────────────
-document.querySelectorAll('.dpad-btn').forEach(btn => {
-  const sendDir = () => {
-    const dir = btn.dataset.dir;
-    if (dir) emitControl(dir, state.turboActive ? 100 : state.speed);
-  };
-
-  btn.addEventListener('mousedown',  sendDir);
-  btn.addEventListener('touchstart', e => { e.preventDefault(); sendDir(); }, { passive: false });
-
-  const stopDir = () => {
-    // Only stop if no keys are held
-    if (state.keysDown.size === 0) emitControl('stop', state.speed);
-  };
-  btn.addEventListener('mouseup',  stopDir);
-  btn.addEventListener('touchend', e => { e.preventDefault(); stopDir(); }, { passive: false });
-});
-
-// ── Speed slider ──────────────────────────────────────────────────────────────
-speedSlider.addEventListener('input', () => {
-  state.speed = parseInt(speedSlider.value, 10);
-  updateSpeedUI(state.speed);
-  emitControl(state.direction, state.speed);
-});
-
-// ── Action buttons ────────────────────────────────────────────────────────────
-function toggleHorn() {
-  socket.emit('control', { direction: 'horn', speed: state.speed });
-  const btn = document.getElementById('btnHorn');
-  btn.classList.add('active');
-  setTimeout(() => btn.classList.remove('active'), 400);
-  addLog('pub', 'HORN', '');
-}
-function toggleLight() {
-  state.lightActive = !state.lightActive;
-  document.getElementById('btnLight').classList.toggle('active', state.lightActive);
-  socket.emit('control', { direction: state.lightActive ? 'light-on' : 'light-off', speed: 0 });
-  addLog('pub', state.lightActive ? 'LIGHT ON' : 'LIGHT OFF', '');
-}
-function toggleTurbo() {
-  state.turboActive = !state.turboActive;
-  document.getElementById('btnTurbo').classList.toggle('active', state.turboActive);
-  if (state.turboActive) { state.speed = 100; updateSpeedUI(100); }
-  addLog('pub', state.turboActive ? 'TURBO ON' : 'TURBO OFF', '');
-}
-
-document.getElementById('btnHorn') .addEventListener('click', toggleHorn);
-document.getElementById('btnLight').addEventListener('click', toggleLight);
-document.getElementById('btnTurbo').addEventListener('click', toggleTurbo);
-
-// Trigger buttons
-document.getElementById('trigL').addEventListener('mousedown', () => {
-  document.getElementById('trigL').classList.add('pressed');
-  state.keysDown.clear(); emitControl('stop', state.speed);
-});
-document.getElementById('trigL').addEventListener('mouseup', () => {
-  document.getElementById('trigL').classList.remove('pressed');
-});
-document.getElementById('trigR').addEventListener('mousedown', () => {
-  document.getElementById('trigR').classList.add('pressed');
-  state.turboActive = true; state.speed = 100; updateSpeedUI(100);
-  emitControl(state.direction, 100);
-});
-document.getElementById('trigR').addEventListener('mouseup', () => {
-  document.getElementById('trigR').classList.remove('pressed');
-  state.turboActive = false;
-});
-
-// Clear log
+// ── Clear log ─────────────────────────────────────────────────────────────────
 document.getElementById('btnClear').addEventListener('click', () => { logList.innerHTML = ''; });
 
 // ── Settings panel ────────────────────────────────────────────────────────────
@@ -448,6 +231,167 @@ window.addEventListener('gamepaddisconnected', (e) => {
   if (e.gamepad.index === state.gamepadIndex) stopGamepadLoop();
 });
 
+// ── Web Serial API – TX via USB Serial (CRSF / EdgeTX) ────────────────────────
+// CRSF frame: [0xC8][len][type 0x16][22 bytes packed channels][CRC8]
+// 16 ch × 11-bit packed → 22 bytes. Range: 172(min)–992(ctr)–1811(max)
+
+const CRSF_SYNC    = 0xC8;
+const CRSF_CH_TYPE = 0x16;
+const CRC8_POLY    = 0xD5;
+
+function crc8(buf, offset, len) {
+  let crc = 0;
+  for (let i = offset; i < offset + len; i++) {
+    crc ^= buf[i];
+    for (let b = 0; b < 8; b++)
+      crc = (crc & 0x80) ? ((crc << 1) ^ CRC8_POLY) & 0xFF : (crc << 1) & 0xFF;
+  }
+  return crc;
+}
+
+function parseCRSFChannels(data, frameStart) {
+  // data[frameStart]   = CRSF_SYNC (0xC8)
+  // data[frameStart+1] = payload len (includes type+crc, so 24 for RC frame)
+  // data[frameStart+2] = type (0x16)
+  // data[frameStart+3..24] = 22 bytes packed channels
+  // data[frameStart+25] = CRC8 over bytes [type..last_channel]
+  const payloadLen = data[frameStart + 1]; // e.g. 24
+  const frameLen   = 2 + payloadLen;       // sync + len + payload
+  if (frameStart + frameLen > data.length) return null; // incomplete
+
+  const crcCalc = crc8(data, frameStart + 2, payloadLen - 1);
+  const crcRecv = data[frameStart + 2 + payloadLen - 1];
+  if (crcCalc !== crcRecv) return null; // bad CRC
+
+  const p = frameStart + 3; // start of channel bytes
+  // Unpack 16 × 11-bit values (little-endian bit order)
+  const ch = new Array(16);
+  let bitPos = 0;
+  for (let i = 0; i < 16; i++) {
+    const byteIdx = Math.floor(bitPos / 8);
+    const bitIdx  = bitPos % 8;
+    let val = (data[p + byteIdx] >> bitIdx) | (data[p + byteIdx + 1] << (8 - bitIdx));
+    if (bitIdx > 5) val |= (data[p + byteIdx + 2] << (16 - bitIdx));
+    ch[i] = val & 0x7FF;
+    bitPos += 11;
+  }
+  return { ch, frameLen };
+}
+
+function crsfToMicros(v) { return Math.round(((v - 172) / (1811 - 172)) * 1000 + 1000); }
+function crsfToPct(v)    { return Math.round(((v - 172) / (1811 - 172)) * 100); }
+
+async function serialConnect() {
+  if (!('serial' in navigator)) {
+    addLog('err', 'Web Serial API không được hỗ trợ', 'Dùng Chrome/Edge ≥ 89');
+    return;
+  }
+  // If already connected – disconnect
+  if (state.serialConnected) {
+    await serialDisconnect();
+    return;
+  }
+  try {
+    const port = await navigator.serial.requestPort();
+    await port.open({ baudRate: 420000 }); // EdgeTX USB serial default
+    state.serialPort = port;
+    state.serialConnected = true;
+
+    serialDot.classList.add('online');
+    serialLbl.textContent = 'Disconnect';
+    document.getElementById('btnSerial').classList.add('connected');
+    addLog('pub', 'Serial kết nối', `baud:420000`);
+
+    // Read loop
+    const reader = port.readable.getReader();
+    state.serialReader = reader;
+    const buf = [];
+
+    (async () => {
+      try {
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          for (const byte of value) buf.push(byte);
+
+          // Scan buffer for CRSF frames
+          let i = 0;
+          while (i < buf.length - 2) {
+            if (buf[i] !== CRSF_SYNC) { i++; continue; }
+            if (buf[i + 2] !== CRSF_CH_TYPE) { i++; continue; }
+            const payLen = buf[i + 1];
+            if (i + 2 + payLen > buf.length) break; // wait for more data
+
+            const arr  = new Uint8Array(buf.slice(i, i + 2 + payLen));
+            const result = parseCRSFChannels(arr, 0);
+            if (result) {
+              const { ch } = result;
+              // Update channel strip (first 6 channels)
+              ch.slice(0, 6).forEach((v, idx) => {
+                if (chRefs[idx]) chRefs[idx].textContent = crsfToMicros(v);
+              });
+
+              // Derive direction from CH1(Roll) CH2(Pitch) - AETR layout
+              const roll  = crsfToPct(ch[0]) - 50; // -50..+50
+              const pitch = crsfToPct(ch[1]) - 50; // negative = forward
+              const thr   = crsfToPct(ch[2]);       // 0..100
+
+              const DZ = 15;
+              const fwd = pitch < -DZ, bwd = pitch > DZ;
+              const lft = roll  < -DZ, rgt = roll  > DZ;
+              let dir = 'stop';
+              if      (fwd && lft) dir = 'forward-left';
+              else if (fwd && rgt) dir = 'forward-right';
+              else if (bwd && lft) dir = 'backward-left';
+              else if (bwd && rgt) dir = 'backward-right';
+              else if (fwd)        dir = 'forward';
+              else if (bwd)        dir = 'backward';
+              else if (lft)        dir = 'left';
+              else if (rgt)        dir = 'right';
+
+              emitControl(dir, thr);
+
+              const channels = ch.slice(0, 16).map(crsfToMicros);
+              socket.emit('gamepad', {
+                channels, axes: ch.slice(0, 6).map(v => ((v - 992) / 819).toFixed(4)),
+                dir, thr, source: 'serial', ts: Date.now(),
+              });
+
+              i += 2 + payLen;
+            } else {
+              i++; // bad CRC, skip
+            }
+            buf.splice(0, i);
+            i = 0;
+          }
+        }
+      } catch (err) {
+        if (state.serialConnected) addLog('err', 'Serial read error', err.message);
+      } finally {
+        serialDisconnect();
+      }
+    })();
+
+  } catch (err) {
+    if (err.name !== 'NotFoundError') // user cancelled
+      addLog('err', 'Serial error', err.message);
+  }
+}
+
+async function serialDisconnect() {
+  state.serialConnected = false;
+  try { await state.serialReader?.cancel(); } catch (_) {}
+  try { await state.serialPort?.close();   } catch (_) {}
+  state.serialReader = null;
+  state.serialPort   = null;
+  serialDot.classList.remove('online');
+  serialLbl.textContent = 'Serial';
+  document.getElementById('btnSerial').classList.remove('connected');
+  addLog('err', 'Serial ngắt kết nối', '');
+}
+
+document.getElementById('btnSerial').addEventListener('click', serialConnect);
+
 // ── Socket.io events ──────────────────────────────────────────────────────────
 socket.on('mqtt_status', ({ connected, broker, error }) => {
   mqttDot.classList.toggle('online', connected);
@@ -478,11 +422,5 @@ socket.on('mqtt_message', ({ topic, payload }) => {
 // ── Init ──────────────────────────────────────────────────────────────────────
 updateDirectionUI('stop');
 updateSpeedUI(50);
-updateArc(50);
 
-// Prevent default scroll on arrow / space
-window.addEventListener('keydown', e => {
-  if (['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Space'].includes(e.code)) {
-    e.preventDefault();
-  }
-}, { passive: false });
+
